@@ -3,5 +3,4 @@ pandas
 openpyxl
 numpy
 requests
-ftplib
 python-dotenv
