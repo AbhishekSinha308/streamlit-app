@@ -574,46 +574,68 @@ st.markdown(
 # ====================== CONFIGURATION ======================
 section_header("📁", "Configuration")
 
-NETWORK_SHARE = r"\\172.16.0.65\Share\24_23_QA_Team\Abhishek_Sinha"
-SCRIPTS_DIR = r"\\172.16.0.65\Share\24_23_QA_Team\Abhishek_Sinha\Commit_File"
+def get_paths():
+    """Auto-detect environment and return correct paths"""
+    # Detect if running on Streamlit Cloud
+    is_cloud = (
+        os.environ.get("STREAMLIT_SHARING_MODE") == "streamlit" or
+        "streamlit" in os.getcwd().lower() or
+        "/home/appuser" in os.getcwd() or
+        "/tmp" in os.getcwd()
+    )
+    
+    if is_cloud:
+        # === Streamlit Cloud ===
+        base_dir = Path(os.getcwd())
+        output_path = base_dir / "outputs"
+        scripts_path = base_dir
+        st.info("🌐 **Running on Streamlit Cloud** - Files will be saved in temporary folder")
+    else:
+        # === Local Network ===
+        output_path = Path(r"\\172.16.0.65\Share\24_23_QA_Team\Abhishek_Sinha")
+        scripts_path = Path(r"\\172.16.0.65\Share\24_23_QA_Team\Abhishek_Sinha\Commit_File")
+        st.success("🏠 **Running Locally** - Using Network Share")
+    
+    # Create output folder
+    os.makedirs(output_path, exist_ok=True)
+    
+    return str(output_path), str(scripts_path)
+
+# Get paths
+shared_path, scripts_path = get_paths()
 
 shared_path = st.text_input(
-    "📍 Output Folder Path (Network Share)",
-    value=NETWORK_SHARE,
-    help="Network share path where ALL pipeline scripts save their outputs."
+    "📍 Output Folder Path",
+    value=shared_path,
+    help="Output folder (Network Share locally | Temporary folder on Cloud)"
 )
 
 scripts_path = st.text_input(
     "📂 Scripts Directory Path",
-    value=SCRIPTS_DIR,
-    help="Path to folder containing all Python scripts (.py files)."
+    value=scripts_path,
+    help="Folder containing all .py scripts"
 )
 
 output_dir = Path(shared_path)
 scripts_dir = Path(scripts_path)
 
-# Verify network path is accessible
+# ====================== PATH VALIDATION ======================
 try:
     if output_dir.exists():
-        st.success(f"✅ **Connected to Output Directory:** `{shared_path}`")
+        st.success(f"✅ **Output Directory Connected:** `{shared_path}`")
     else:
-        st.error(f"❌ **Output path not accessible:** `{shared_path}`")
-        st.stop()
+        if "streamlit" in str(output_dir).lower() or os.getcwd() in str(output_dir):
+            st.warning("⚠️ Cloud mode - Using temporary folder")
+        else:
+            st.error(f"❌ **Output path not accessible:** `{shared_path}`")
     
     if scripts_dir.exists():
-        st.success(f"✅ **Connected to Scripts Directory:** `{scripts_path}`")
+        st.success(f"✅ **Scripts Directory Connected:** `{scripts_path}`")
     else:
-        st.error(f"❌ **Scripts path not accessible:** `{scripts_path}`")
-        st.error("Please verify:")
-        st.error("  • Scripts directory exists")
-        st.error("  • Path is correct: `\\Commit_File`")
-        st.error("  • You have read permissions")
-        st.stop()
+        st.warning("⚠️ Scripts path not found - will try current directory")
+        scripts_dir = Path(os.getcwd())
 except Exception as e:
-    st.error(f"❌ **Cannot access network paths:** {e}")
-    st.stop()
-
-st.markdown("---")
+    st.warning(f"⚠️ Path check issue: {e}")
 
 # ====================== FTP SETTINGS ======================
 section_header("⚙️", "FTP Download Settings")
@@ -973,7 +995,6 @@ if st.session_state.pipeline_completed:
     st.markdown("---")
     st.info(f"📂 **Output Directory:** `{output_dir}`")
 
-# ====================== FOOTER ======================
 st.markdown("---")
 st.markdown(f"""
 <div style="text-align:center;color:#64748b;font-size:11px;margin-top:24px;">
