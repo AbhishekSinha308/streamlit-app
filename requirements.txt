@@ -6,3 +6,4 @@ requests
 python-dotenv
 netCDF4
 pymongo
+dnspython
