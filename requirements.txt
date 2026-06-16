@@ -4,3 +4,4 @@ openpyxl
 numpy
 requests
 python-dotenv
+netCDF4
