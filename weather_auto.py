@@ -494,28 +494,33 @@ def run_python_script(script_name, scripts_dir, output_dir):
     start_time = time.time()
     
     try:
-        # Find the actual script file
         script_path = find_script(script_name, scripts_dir)
         if not script_path or not script_path.exists():
-            return False, "", f"Script not found: {script_name}\n\nSearched in: {scripts_dir}", 0
+            return False, "", f"Script not found: {script_name}", 0
         
-        # Set up environment
-        env = os.environ.copy()
+        # Set up environment - INHERIT FULL PARENT ENV
+        env = os.environ.copy()  # This copies parent process env
         env["OUTPUT_DIR"] = str(output_dir)
-        env["PYTHONUNBUFFERED"] = "1"  # Ensure unbuffered output
+        env["PYTHONUNBUFFERED"] = "1"
+        
+        # ADD: Explicitly set these if MongoDB credentials are in environment
+        # (They should be inherited above, but we're being explicit)
+        for key in os.environ:
+            if 'MONGO' in key or 'DB' in key or 'FTP' in key:
+                env[key] = os.environ[key]
         
         st.info(f"📍 Running: {script_path.name}")
         st.info(f"📂 Working Dir: {scripts_dir}")
         st.info(f"💾 Output Dir: {output_dir}")
         
-        # Run with unbuffered output and longer timeout
+        # Run with full environment inheritance
         result = subprocess.run(
             [sys.executable, str(script_path)],
             capture_output=True,
             text=True,
-            cwd=str(scripts_dir),  # Run from scripts directory
-            env=env,
-            timeout=3600  # 1 hour timeout
+            cwd=str(scripts_dir),
+            env=env,  # Pass the environment
+            timeout=3600
         )
         
         execution_time = time.time() - start_time
@@ -574,68 +579,46 @@ st.markdown(
 # ====================== CONFIGURATION ======================
 section_header("📁", "Configuration")
 
-def get_paths():
-    """Auto-detect environment and return correct paths"""
-    # Detect if running on Streamlit Cloud
-    is_cloud = (
-        os.environ.get("STREAMLIT_SHARING_MODE") == "streamlit" or
-        "streamlit" in os.getcwd().lower() or
-        "/home/appuser" in os.getcwd() or
-        "/tmp" in os.getcwd()
-    )
-    
-    if is_cloud:
-        # === Streamlit Cloud ===
-        base_dir = Path(os.getcwd())
-        output_path = base_dir / "outputs"
-        scripts_path = base_dir
-        st.info("🌐 **Running on Streamlit Cloud** - Files will be saved in temporary folder")
-    else:
-        # === Local Network ===
-        output_path = Path(r"\\172.16.0.65\Share\24_23_QA_Team\Abhishek_Sinha")
-        scripts_path = Path(r"\\172.16.0.65\Share\24_23_QA_Team\Abhishek_Sinha\Commit_File")
-        st.success("🏠 **Running Locally** - Using Network Share")
-    
-    # Create output folder
-    os.makedirs(output_path, exist_ok=True)
-    
-    return str(output_path), str(scripts_path)
-
-# Get paths
-shared_path, scripts_path = get_paths()
+NETWORK_SHARE = r"\\172.16.0.65\Share\24_23_QA_Team\Abhishek_Sinha"
+SCRIPTS_DIR = r"\\172.16.0.65\Share\24_23_QA_Team\Abhishek_Sinha\Commit_File"
 
 shared_path = st.text_input(
-    "📍 Output Folder Path",
-    value=shared_path,
-    help="Output folder (Network Share locally | Temporary folder on Cloud)"
+    "📍 Output Folder Path (Network Share)",
+    value=NETWORK_SHARE,
+    help="Network share path where ALL pipeline scripts save their outputs."
 )
 
 scripts_path = st.text_input(
     "📂 Scripts Directory Path",
-    value=scripts_path,
-    help="Folder containing all .py scripts"
+    value=SCRIPTS_DIR,
+    help="Path to folder containing all Python scripts (.py files)."
 )
 
 output_dir = Path(shared_path)
 scripts_dir = Path(scripts_path)
 
-# ====================== PATH VALIDATION ======================
+# Verify network path is accessible
 try:
     if output_dir.exists():
-        st.success(f"✅ **Output Directory Connected:** `{shared_path}`")
+        st.success(f"✅ **Connected to Output Directory:** `{shared_path}`")
     else:
-        if "streamlit" in str(output_dir).lower() or os.getcwd() in str(output_dir):
-            st.warning("⚠️ Cloud mode - Using temporary folder")
-        else:
-            st.error(f"❌ **Output path not accessible:** `{shared_path}`")
+        st.error(f"❌ **Output path not accessible:** `{shared_path}`")
+        st.stop()
     
     if scripts_dir.exists():
-        st.success(f"✅ **Scripts Directory Connected:** `{scripts_path}`")
+        st.success(f"✅ **Connected to Scripts Directory:** `{scripts_path}`")
     else:
-        st.warning("⚠️ Scripts path not found - will try current directory")
-        scripts_dir = Path(os.getcwd())
+        st.error(f"❌ **Scripts path not accessible:** `{scripts_path}`")
+        st.error("Please verify:")
+        st.error("  • Scripts directory exists")
+        st.error("  • Path is correct: `\\Commit_File`")
+        st.error("  • You have read permissions")
+        st.stop()
 except Exception as e:
-    st.warning(f"⚠️ Path check issue: {e}")
+    st.error(f"❌ **Cannot access network paths:** {e}")
+    st.stop()
+
+st.markdown("---")
 
 # ====================== FTP SETTINGS ======================
 section_header("⚙️", "FTP Download Settings")
@@ -701,23 +684,35 @@ def render_status_table(statuses):
         "error":   ("❌", "step-error"),
         "skipped": ("⏭️", "step-skipped"),
     }
-    rows = ""
+    
+    # Prepare data for the table in a structured format
+    table_rows_data = []
     for i, (label, script) in enumerate(PIPELINE):
-        s = statuses[i] if i < len(statuses) else "pending"
-        icon, css = icon_map.get(s, ("⏳", "step-pending"))
-        rows += (
+        status_key = statuses[i] if i < len(statuses) else "pending"
+        icon, css_class = icon_map.get(status_key, ("⏳", "step-pending"))
+        
+        table_rows_data.append({
+            "label": label,
+            "script": script,
+            "status_text": status_key.upper(),
+            "icon": icon,
+            "css_class": css_class
+        })
+
+    # Generate HTML rows from the structured data
+    rows_html = ""
+    for row_data in table_rows_data:
+        rows_html += (
             f"<tr>"
-            f"<td style='padding:12px 16px;'><span class='{css}'>{icon} {label}</span></td>"
-            f"<td style='padding:12px 16px;font-family:monospace;font-size:12px;color:#94a3b8;'>{script}</td>"
-            f"<td style='padding:12px 16px;'><span class='{css}'>{s.upper()}</span></td>"
+            f"<td style='padding:12px 16px;'><span class='{row_data['css_class']}'>{row_data['icon']} {row_data['label']}</span></td>"
+            f"<td style='padding:12px 16px;font-family:monospace;font-size:12px;color:#94a3b8;'>{row_data['script']}</td>"
+            f"<td style='padding:12px 16px;'><span class='{row_data['css_class']}'>{row_data['status_text']}</span></td>"
             f"</tr>"
         )
     return (
         "<div class='status-table'>"
         "<table><thead><tr>"
         "<th>Step</th><th>Script</th><th>Status</th>"
-        "</tr></thead>"
-        f"<tbody>{rows}</tbody></table></div>"
     )
 
 status_placeholder.markdown(render_status_table(st.session_state.statuses), unsafe_allow_html=True)
@@ -995,6 +990,7 @@ if st.session_state.pipeline_completed:
     st.markdown("---")
     st.info(f"📂 **Output Directory:** `{output_dir}`")
 
+# ====================== FOOTER ======================
 st.markdown("---")
 st.markdown(f"""
 <div style="text-align:center;color:#64748b;font-size:11px;margin-top:24px;">
