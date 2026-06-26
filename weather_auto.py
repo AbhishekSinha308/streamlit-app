@@ -4,1000 +4,1527 @@ import os
 import time
 import subprocess
 import datetime
-from pathlib import Path
 import glob
+from pathlib import Path
+from io import BytesIO
+
+import pandas as pd
+import streamlit as st
+
 
 if sys.platform == "win32":
     try:
-        if not isinstance(sys.stdout, io.TextIOWrapper) or sys.stdout.encoding != 'utf-8':
-            sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', newline='')
-        if not isinstance(sys.stderr, io.TextIOWrapper) or sys.stderr.encoding != 'utf-8':
-            sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', newline='')
-    except (AttributeError, ValueError, OSError):
-        pass  # Gracefully continue if wrapping fails
+        if not isinstance(sys.stdout, io.TextIOWrapper) or sys.stdout.encoding != "utf-8":
+            sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", newline="")
+        if not isinstance(sys.stderr, io.TextIOWrapper) or sys.stderr.encoding != "utf-8":
+            sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", newline="")
+    except Exception:
+        pass
 
-import streamlit as st
-import pandas as pd
 
 st.set_page_config(
     page_title="Weather Auto Regression",
     layout="wide",
     page_icon="⚡",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-# ====================== STYLING ======================
-st.markdown("""
+
+st.markdown(
+    """
 <style>
-    /* Force dark background everywhere */
-    .stApp {
-        background: #0f172a !important;
-    }
-    [data-testid="stAppViewContainer"] {
-        background: #0f172a !important;
-    }
-    [data-testid="stMain"] {
-        background: #0f172a !important;
-    }
-    .main .block-container {
-        background: #0f172a !important;
-    }
+* {
+    box-sizing: border-box;
+}
 
-    /* SIDEBAR */
-    [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%) !important;
-        border-right: 2px solid #14b8a6 !important;
-    }
-    [data-testid="stSidebar"] > div:first-child {
-        padding-top: 2rem !important;
-    }
+html, body {
+    scroll-behavior: smooth;
+}
 
-    /* LOGO */
-    .logo-container {
-        background: rgba(20,184,166,0.1);
-        border: 2px solid #14b8a6;
-        border-radius: 16px;
-        padding: 24px 16px;
-        margin-bottom: 24px;
-        text-align: center;
-    }
-    .company-name {
-        font-size: 20px;
-        font-weight: 700;
-        color: #14b8a6 !important;
-        font-family: 'Courier New', monospace;
-        margin-bottom: 6px;
-    }
-    .tagline {
-        font-size: 12px;
-        color: #94a3b8 !important;
-        font-weight: 500;
-    }
-    .sidebar-info {
-        background: rgba(245,158,11,0.1);
-        border: 1px solid #f59e0b;
-        border-radius: 12px;
-        padding: 12px 14px;
-        font-size: 12px;
-        color: #f59e0b !important;
-        font-weight: 600;
-        text-align: center;
-    }
+#MainMenu, footer, header {
+    visibility: hidden;
+}
 
-    /* MAIN TITLE */
-    .main-title {
-        font-size: 48px;
-        font-weight: 800;
-        background: linear-gradient(135deg, #14b8a6 0%, #f59e0b 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
-        margin-bottom: 8px;
-        letter-spacing: -1px;
-    }
+.stApp {
+    background: linear-gradient(135deg, #050810 0%, #0a0e1a 25%, #0f172a 50%, #0a0e1a 75%, #050810 100%) !important;
+    color: #e2e8f0 !important;
+    overflow-x: hidden;
+}
 
-    /* BUTTONS */
-    .stButton > button {
-        background: linear-gradient(135deg, #14b8a6 0%, #0f766e 100%) !important;
-        color: #ffffff !important;
-        -webkit-text-fill-color: #ffffff !important;
-        font-weight: 700 !important;
-        height: 52px !important;
-        border: none !important;
-        border-radius: 10px !important;
-        font-size: 15px !important;
-        letter-spacing: 0.5px !important;
-    }
-    .stButton > button:hover {
-        background: linear-gradient(135deg, #0d9488 0%, #0f766e 100%) !important;
-        transform: translateY(-2px) !important;
-    }
-    .stButton > button p,
-    .stButton > button span {
-        color: #ffffff !important;
-        -webkit-text-fill-color: #ffffff !important;
-    }
+/* Animated background gradient */
+@keyframes gradientFlow {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+}
 
-    /* INPUT FIELDS */
-    .stTextInput > div > div > input {
-        background-color: #1e293b !important;
-        border: 2px solid #334155 !important;
-        color: #f1f5f9 !important;
-        -webkit-text-fill-color: #f1f5f9 !important;
-        border-radius: 8px !important;
-    }
+.stApp {
+    background-size: 400% 400%;
+    animation: gradientFlow 15s ease infinite;
+}
 
-    /* ALL LABELS */
-    label, label p, label span,
-    .stTextInput label, .stTextInput label p,
-    .stSelectbox label, .stSelectbox label p,
-    .stDateInput label, .stDateInput label p,
-    .stCheckbox label, .stCheckbox label p,
-    .stCheckbox label span,
-    [data-testid="stWidgetLabel"],
-    [data-testid="stWidgetLabel"] p,
-    [data-testid="stWidgetLabel"] span {
-        color: #facc15 !important;
-        -webkit-text-fill-color: #facc15 !important;
-        font-size: 14px !important;
-        font-weight: 600 !important;
-    }
-    /* ALL PARAGRAPH TEXT */
-    p, span, div.stMarkdown p {
-    color: #1e293b !important;  /* Dark text for dark bg */
-    -webkit-text-fill-color: #1e293b !important;
-    }
+.block-container {
+    padding-top: 1rem;
+    padding-bottom: 1.5rem;
+    max-width: 1500px;
+    padding-left: 2rem;
+    padding-right: 2rem;
+}
 
-    /* Ensure dark text on light backgrounds */
-    [data-testid="stAppViewContainer"] p,
-    [data-testid="stAppViewContainer"] span {
-    color: #1e293b !important;
-    }
+/* ============ SIDEBAR STYLING ============ */
+[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #0a0e1a 0%, #050810 100%) !important;
+    border-right: 1px solid rgba(99, 102, 241, 0.1) !important;
+}
 
-    /* ALERT / INFO / SUCCESS / WARNING BOXES */
-    [data-testid="stAlert"] {
-        border-radius: 10px !important;
-        border-left: 4px solid !important;
-    }
-    [data-testid="stAlert"] p,
-    [data-testid="stAlert"] span,
-    [data-testid="stAlert"] strong,
-    [data-testid="stAlert"] li,
-    [data-testid="stNotification"] p {
-        color: #f8fafc !important;
-        -webkit-text-fill-color: #f8fafc !important;
-        font-weight: 500 !important;
-    }
-    div[data-testid="stMarkdownContainer"] p,
-    div[data-testid="stMarkdownContainer"] span,
-    div[data-testid="stMarkdownContainer"] strong,
-    div[data-testid="stMarkdownContainer"] li {
-        color: #f8fafc !important;
-        -webkit-text-fill-color: #f8fafc !important;
-    }
+[data-testid="stSidebar"] > div {
+    padding-top: 1.2rem;
+}
 
-    /* TABS */
-    [data-testid="stTabs"] button {
-        color: #e2e8f0 !important;
-        -webkit-text-fill-color: #e2e8f0 !important;
-        font-weight: 600 !important;
-        font-size: 15px !important;
-        border-bottom: 2px solid transparent !important;
-        background: transparent !important;
-    }
-    [data-testid="stTabs"] button p,
-    [data-testid="stTabs"] button span {
-        color: #e2e8f0 !important;
-        -webkit-text-fill-color: #e2e8f0 !important;
-        font-size: 15px !important;
-        font-weight: 600 !important;
-    }
-    [data-testid="stTabs"] button[aria-selected="true"] {
-        color: #14b8a6 !important;
-        -webkit-text-fill-color: #14b8a6 !important;
-        border-color: #14b8a6 !important;
-    }
-    [data-testid="stTabs"] button[aria-selected="true"] p,
-    [data-testid="stTabs"] button[aria-selected="true"] span {
-        color: #14b8a6 !important;
-        -webkit-text-fill-color: #14b8a6 !important;
-    }
+/* ============ PREMIUM TOPBAR ============ */
+.topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    padding: 18px 24px;
+    background: linear-gradient(135deg, rgba(15, 23, 42, 0.85), rgba(10, 14, 26, 0.85));
+    border: 1px solid rgba(99, 102, 241, 0.15);
+    border-radius: 16px;
+    box-shadow: 
+        0 8px 32px rgba(0, 0, 0, 0.4),
+        inset 0 1px 1px rgba(255, 255, 255, 0.05);
+    margin-bottom: 28px;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+}
 
-    /* SELECTBOX */
-    [data-testid="stSelectbox"] > div > div {
-        background: #1e293b !important;
-        color: #f1f5f9 !important;
-        -webkit-text-fill-color: #f1f5f9 !important;
-        border: 2px solid #334155 !important;
-        border-radius: 8px !important;
-    }
-    [data-testid="stSelectbox"] span,
-    [data-testid="stSelectbox"] div[data-baseweb] span {
-        color: #f1f5f9 !important;
-        -webkit-text-fill-color: #f1f5f9 !important;
-    }
+.brand {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    font-size: 18px;
+    font-weight: 900;
+    color: #f8fafc;
+    letter-spacing: -0.3px;
+}
 
-    /* DATE INPUT */
-    [data-testid="stDateInput"] input {
-        background: #1e293b !important;
-        color: #f1f5f9 !important;
-        -webkit-text-fill-color: #f1f5f9 !important;
-        border: 2px solid #334155 !important;
-    }
+.brand-badge {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #6366f1 0%, #a78bfa 50%, #10b981 100%);
+    box-shadow: 
+        0 12px 32px rgba(99, 102, 241, 0.35),
+        inset 0 1px 2px rgba(255, 255, 255, 0.2);
+    font-size: 22px;
+    transition: all 300ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
 
-    /* EXPANDER */
-    [data-testid="stExpander"] > div:first-child > button {
-        background-color: #1e293b !important;
-        border: 1px solid #334155 !important;
-        border-radius: 8px !important;
-        color: #f1f5f9 !important;
-        -webkit-text-fill-color: #f1f5f9 !important;
-        font-weight: 600 !important;
-    }
-    [data-testid="stExpander"] summary p,
-    [data-testid="stExpander"] details summary p {
-        color: #f1f5f9 !important;
-        -webkit-text-fill-color: #f1f5f9 !important;
-    }
+.brand-badge:hover {
+    transform: scale(1.05) rotate(5deg);
+    box-shadow: 0 16px 40px rgba(99, 102, 241, 0.45);
+}
 
-    /* PROGRESS BAR */
-    .stProgress > div > div > div {
-        background: linear-gradient(90deg, #14b8a6, #f59e0b) !important;
-        border-radius: 8px !important;
-    }
+.navlinks {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #cbd5e1;
+    font-size: 13px;
+    font-weight: 700;
+    white-space: nowrap;
+    letter-spacing: 0.5px;
+}
 
-    /* STATUS TABLE */
-    .status-table {
-        background-color: #1e293b;
-        border-radius: 12px;
-        border: 1px solid #334155;
-        padding: 20px;
-    }
-    .status-table table { width: 100%; border-collapse: separate; border-spacing: 0 8px; }
-    .status-table thead { background: rgba(20,184,166,0.1); }
-    .status-table th {
-        padding: 14px 16px !important;
-        color: #14b8a6 !important;
-        font-weight: 700;
-        font-size: 12px;
-        letter-spacing: 0.5px;
-        text-transform: uppercase;
-    }
-    .status-table tbody tr {
-        background: rgba(30,41,59,0.6);
-        border: 1px solid #334155;
-        transition: all 0.3s ease;
-    }
-    .status-table tbody tr:hover {
-        background: rgba(20,184,166,0.1);
-        transform: translateX(4px);
-    }
-    .status-table td {
-        padding: 14px 16px !important;
-        color: #cbd5e1 !important;
-        font-size: 13px;
-        font-weight: 500;
-    }
+.nav-item {
+    padding: 10px 16px;
+    border-radius: 10px;
+    background: transparent;
+    cursor: pointer;
+    transition: all 250ms cubic-bezier(0.34, 1.56, 0.64, 1);
+    position: relative;
+}
 
-    /* STATUS BADGES */
-    .step-pending  { 
-        color: #94a3b8 !important; 
-        font-weight: 700;
-        background: rgba(148,163,184,0.25) !important;
-        padding: 8px 16px !important;
-        border-radius: 6px !important;
-        display: inline-block !important;
-        border-left: 4px solid #94a3b8 !important;
-        white-space: nowrap;
-    }
-    .step-running  { 
-        color: #fbbf24 !important; 
-        font-weight: 700;
-        background: rgba(245,158,11,0.3) !important;
-        padding: 8px 16px !important;
-        border-radius: 6px !important;
-        display: inline-block !important;
-        border-left: 4px solid #f59e0b !important;
-        white-space: nowrap;
-        animation: pulse 1.5s infinite;
-    }
-    .step-done     { 
-        color: #10b981 !important; 
-        font-weight: 700;
-        background: rgba(16,185,129,0.25) !important;
-        padding: 8px 16px !important;
-        border-radius: 6px !important;
-        display: inline-block !important;
-        border-left: 4px solid #10b981 !important;
-        white-space: nowrap;
-    }
-    .step-error    { 
-        color: #fca5a5 !important; 
-        font-weight: 700;
-        background: rgba(239,68,68,0.3) !important;
-        padding: 8px 16px !important;
-        border-radius: 6px !important;
-        display: inline-block !important;
-        border-left: 4px solid #ef4444 !important;
-        white-space: nowrap;
-        animation: shake 0.5s ease-in-out;
-    }
-    .step-skipped  { 
-        color: #14b8a6 !important; 
-        font-weight: 700;
-        background: rgba(20,184,166,0.25) !important;
-        padding: 8px 16px !important;
-        border-radius: 6px !important;
-        display: inline-block !important;
-        border-left: 4px solid #14b8a6 !important;
-        white-space: nowrap;
-    }
+.nav-item::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 0;
+    height: 2px;
+    background: linear-gradient(90deg, #6366f1, #10b981);
+    border-radius: 1px;
+    transition: width 300ms ease;
+}
 
-    /* SUCCESS COMPLETION PANEL */
-    .success-panel {
-        background: linear-gradient(135deg, rgba(16,185,129,0.15), rgba(20,184,166,0.15));
-        border: 2px solid #10b981;
-        border-radius: 16px;
-        padding: 32px;
-        margin: 24px 0;
-        box-shadow: 0 8px 32px rgba(16,185,129,0.1);
+.nav-item:hover {
+    background: rgba(99, 102, 241, 0.12);
+    color: #e2e8f0;
+    transform: translateY(-2px);
+}
+
+.nav-item:hover::after {
+    width: 100%;
+}
+
+.nav-item.active {
+    background: rgba(99, 102, 241, 0.18);
+    color: #fff;
+    border: 1px solid rgba(99, 102, 241, 0.4);
+}
+
+/* ============ PREMIUM HERO SECTION ============ */
+.hero {
+    background: linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(10, 14, 26, 0.95));
+    border: 1px solid rgba(99, 102, 241, 0.18);
+    border-radius: 18px;
+    padding: 32px 36px;
+    margin-bottom: 32px;
+    box-shadow: 
+        0 12px 40px rgba(0, 0, 0, 0.3),
+        inset 0 1px 2px rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    animation: slideInDown 600ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes slideInDown {
+    from {
+        opacity: 0;
+        transform: translateY(-20px);
     }
-    .success-title {
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.hero-title {
+    font-size: 36px;
+    line-height: 1.15;
+    font-weight: 950;
+    color: #f8fafc;
+    letter-spacing: -0.8px;
+    margin-bottom: 10px;
+    background: linear-gradient(135deg, #f8fafc 0%, #cbd5e1 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.hero-sub {
+    color: #94a3b8;
+    font-size: 15px;
+    margin-bottom: 20px;
+    font-weight: 500;
+    letter-spacing: 0.3px;
+}
+
+.hero-pills {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 16px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.12), rgba(16, 185, 129, 0.08));
+    border: 1px solid rgba(99, 102, 241, 0.25);
+    color: #cbd5e1;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.08);
+    transition: all 250ms ease;
+    cursor: default;
+}
+
+.pill:hover {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.18), rgba(16, 185, 129, 0.12));
+    border-color: rgba(99, 102, 241, 0.35);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(99, 102, 241, 0.12);
+}
+
+/* ============ METRIC CARDS - PREMIUM ============ */
+.metric-card {
+    background: linear-gradient(135deg, rgba(15, 23, 42, 0.98), rgba(20, 30, 48, 0.95));
+    border: 1px solid rgba(99, 102, 241, 0.15);
+    border-left: 5px solid var(--accent-color, #6366f1);
+    border-radius: 14px;
+    padding: 22px 24px;
+    min-height: 140px;
+    box-shadow: 
+        0 8px 24px rgba(0, 0, 0, 0.25),
+        inset 0 1px 1px rgba(255, 255, 255, 0.03);
+    transition: all 300ms cubic-bezier(0.34, 1.56, 0.64, 1);
+    position: relative;
+    overflow: hidden;
+}
+
+.metric-card::before {
+    content: '';
+    position: absolute;
+    top: -50%;
+    right: -50%;
+    width: 200px;
+    height: 200px;
+    background: radial-gradient(circle, var(--accent-color, #6366f1) 0%, transparent 70%);
+    opacity: 0.05;
+    transition: all 400ms ease;
+}
+
+.metric-card:hover {
+    border-color: rgba(99, 102, 241, 0.35);
+    transform: translateY(-6px);
+    box-shadow: 
+        0 16px 40px rgba(99, 102, 241, 0.15),
+        inset 0 1px 1px rgba(255, 255, 255, 0.05);
+}
+
+.metric-card:hover::before {
+    top: -20%;
+    right: -20%;
+    opacity: 0.1;
+}
+
+.metric-label {
+    color: #94a3b8;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    margin-bottom: 10px;
+    font-weight: 800;
+}
+
+.metric-value {
+    color: #f8fafc;
+    font-size: 42px;
+    font-weight: 950;
+    line-height: 1;
+    letter-spacing: -1px;
+    margin-bottom: 8px;
+}
+
+.metric-desc {
+    color: #64748b;
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.2px;
+}
+
+/* ============ SECTION HEADERS ============ */
+.section-title {
+    color: #f8fafc;
+    font-size: 20px;
+    font-weight: 850;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin: 12px 0 18px 0;
+    letter-spacing: -0.3px;
+}
+
+.section-bar {
+    width: 5px;
+    height: 26px;
+    border-radius: 5px;
+    background: linear-gradient(180deg, #6366f1 0%, #10b981 100%);
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.25);
+}
+
+/* ============ GLASS CARDS ============ */
+.glass-card, .panel {
+    background: linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(20, 30, 48, 0.90));
+    border: 1px solid rgba(99, 102, 241, 0.15);
+    border-radius: 14px;
+    box-shadow: 
+        0 8px 24px rgba(0, 0, 0, 0.25),
+        inset 0 1px 1px rgba(255, 255, 255, 0.03);
+    padding: 20px 24px;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    transition: all 300ms ease;
+}
+
+.glass-card:hover {
+    border-color: rgba(99, 102, 241, 0.25);
+    box-shadow: 
+        0 12px 32px rgba(99, 102, 241, 0.12),
+        inset 0 1px 1px rgba(255, 255, 255, 0.05);
+    transform: translateY(-2px);
+}
+
+/* ============ STATUS PILLS ============ */
+.status-pill {
+    padding: 7px 14px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 800;
+    display: inline-block;
+    white-space: nowrap;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    transition: all 250ms ease;
+}
+
+.pill-pending {
+    background: linear-gradient(135deg, rgba(107, 114, 128, 0.15), rgba(107, 114, 128, 0.08));
+    color: #d1d5db;
+    border: 1px solid rgba(107, 114, 128, 0.25);
+}
+
+.pill-running {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.15), rgba(59, 130, 246, 0.08));
+    color: #93c5fd;
+    border: 1px solid rgba(59, 130, 246, 0.4);
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    box-shadow: 0 0 12px rgba(59, 130, 246, 0.2);
+}
+
+.pill-done {
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.15), rgba(16, 185, 129, 0.08));
+    color: #86efac;
+    border: 1px solid rgba(16, 185, 129, 0.4);
+}
+
+.pill-error {
+    background: linear-gradient(135deg, rgba(239, 68, 68, 0.15), rgba(239, 68, 68, 0.08));
+    color: #fca5a5;
+    border: 1px solid rgba(239, 68, 68, 0.4);
+}
+
+.pill-skipped {
+    background: linear-gradient(135deg, rgba(139, 92, 246, 0.15), rgba(139, 92, 246, 0.08));
+    color: #d8b4fe;
+    border: 1px solid rgba(139, 92, 246, 0.4);
+}
+
+@keyframes pulse {
+    0%, 100% { 
+        opacity: 1;
+        box-shadow: 0 0 12px rgba(59, 130, 246, 0.2);
+    }
+    50% { 
+        opacity: 0.8;
+        box-shadow: 0 0 20px rgba(59, 130, 246, 0.35);
+    }
+}
+
+/* ============ PREMIUM BUTTONS ============ */
+.stButton > button {
+    background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%) !important;
+    color: white !important;
+    border: none !important;
+    border-radius: 12px !important;
+    font-weight: 800 !important;
+    height: 45px !important;
+    box-shadow: 0 12px 32px rgba(99, 102, 241, 0.3) !important;
+    font-size: 14px !important;
+    letter-spacing: 0.3px !important;
+    transition: all 300ms cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+}
+
+.stButton > button:hover {
+    background: linear-gradient(135deg, #4f46e5 0%, #4338ca 100%) !important;
+    box-shadow: 0 16px 40px rgba(99, 102, 241, 0.45) !important;
+    transform: translateY(-3px) !important;
+}
+
+.stButton > button:active {
+    transform: scale(0.97) !important;
+}
+
+.stDownloadButton > button {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important;
+    color: white !important;
+    border: none !important;
+    border-radius: 12px !important;
+    font-weight: 800 !important;
+    height: 45px !important;
+    box-shadow: 0 12px 32px rgba(16, 185, 129, 0.3) !important;
+}
+
+.stDownloadButton > button:hover {
+    background: linear-gradient(135deg, #059669 0%, #047857 100%) !important;
+    box-shadow: 0 16px 40px rgba(16, 185, 129, 0.4) !important;
+    transform: translateY(-3px) !important;
+}
+
+/* ============ PREMIUM INPUT FIELDS ============ */
+.stTextInput > div > div > input,
+.stNumberInput input,
+.stDateInput input,
+.stSelectbox [data-baseweb="select"] > div {
+    background-color: rgba(15, 23, 42, 0.95) !important;
+    color: #f1f5f9 !important;
+    border: 1px solid rgba(99, 102, 241, 0.2) !important;
+    border-radius: 12px !important;
+    padding: 12px 16px !important;
+    font-weight: 500 !important;
+    font-size: 14px !important;
+    transition: all 300ms ease !important;
+}
+
+.stTextInput > div > div > input:focus,
+.stNumberInput input:focus,
+.stDateInput input:focus {
+    border-color: #6366f1 !important;
+    box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.15) !important;
+    background-color: rgba(20, 30, 48, 0.95) !important;
+}
+
+.stNumberInput button {
+    background-color: rgba(51, 65, 85, 0.8) !important;
+    color: #cbd5e1 !important;
+    border: 1px solid rgba(99, 102, 241, 0.2) !important;
+    border-radius: 10px !important;
+    transition: all 200ms ease !important;
+}
+
+.stNumberInput button:hover {
+    background-color: rgba(71, 85, 105, 0.9) !important;
+    color: #f1f5f9 !important;
+    border-color: #6366f1 !important;
+}
+
+/* ============ LABELS & TEXT ============ */
+label, label p, label span {
+    color: #cbd5e1 !important;
+    font-weight: 700 !important;
+    font-size: 13px !important;
+    letter-spacing: 0.4px !important;
+}
+
+.section-label {
+    color: #6366f1 !important;
+    font-weight: 800 !important;
+    font-size: 11px !important;
+    text-transform: uppercase !important;
+    letter-spacing: 1.2px !important;
+    margin-bottom: 14px !important;
+}
+
+/* ============ SIDEBAR TEXT ============ */
+[data-testid="stSidebar"] *,
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] p,
+[data-testid="stSidebar"] span {
+    color: #e2e8f0 !important;
+}
+
+[data-testid="stSidebar"] input,
+[data-testid="stSidebar"] textarea {
+    color: #f1f5f9 !important;
+    opacity: 1 !important;
+}
+
+/* ============ DATA TABLES (native st.dataframe wrapper only) ============ */
+div[data-testid="stDataFrame"] {
+    border-radius: 14px;
+    overflow: hidden;
+    border: 1px solid rgba(99, 102, 241, 0.15);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+
+/* ============ CUSTOM STYLED HTML TABLES (used for output file previews) ============ */
+.styled-table-wrap {
+    overflow-x: auto;
+    max-height: 520px;
+    overflow-y: auto;
+}
+
+.styled-table-wrap table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.styled-table-wrap thead tr {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.styled-table-wrap th {
+    padding: 12px 14px;
+    text-align: left;
+    color: #94a3b8;
+    text-transform: uppercase;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.6px;
+    background: rgba(15, 23, 42, 0.98);
+    border-bottom: 1px solid rgba(99, 102, 241, 0.2);
+    white-space: nowrap;
+}
+
+.styled-table-wrap td {
+    padding: 10px 14px;
+    color: #e2e8f0;
+    font-size: 13px;
+    font-weight: 500;
+    border-bottom: 1px solid rgba(99, 102, 241, 0.08);
+    white-space: nowrap;
+}
+
+.styled-table-wrap tr:hover td {
+    background-color: rgba(99, 102, 241, 0.08);
+}
+
+.styled-table-wrap tr:nth-child(even) td {
+    background-color: rgba(255, 255, 255, 0.015);
+}
+
+/* Scrollbar theming for the table wrap */
+.styled-table-wrap::-webkit-scrollbar {
+    height: 8px;
+    width: 8px;
+}
+
+.styled-table-wrap::-webkit-scrollbar-track {
+    background: rgba(15, 23, 42, 0.4);
+    border-radius: 8px;
+}
+
+.styled-table-wrap::-webkit-scrollbar-thumb {
+    background: rgba(99, 102, 241, 0.4);
+    border-radius: 8px;
+}
+
+.styled-table-wrap::-webkit-scrollbar-thumb:hover {
+    background: rgba(99, 102, 241, 0.6);
+}
+
+/* ============ EXCEL PREVIEW (real workbook formatting, incl. ============ */
+/* ============ conditional-formatting highlights, via LibreOffice) ======== */
+.excel-preview-wrap {
+    padding: 16px !important;
+}
+
+.excel-preview-scroll {
+    overflow-x: auto;
+    overflow-y: auto;
+    max-height: 560px;
+    border-radius: 10px;
+    background: #ffffff;
+    padding: 4px;
+}
+
+.excel-preview-scroll table {
+    border-collapse: collapse;
+    font-family: Calibri, Arial, sans-serif !important;
+    font-size: 13px !important;
+}
+
+.excel-preview-scroll td,
+.excel-preview-scroll th {
+    border: 1px solid #d4d7dd;
+    padding: 6px 10px !important;
+    white-space: nowrap;
+}
+
+.excel-preview-scroll tr:first-child td,
+.excel-preview-scroll tr:first-child th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.excel-preview-scroll::-webkit-scrollbar {
+    height: 10px;
+    width: 10px;
+}
+
+.excel-preview-scroll::-webkit-scrollbar-track {
+    background: #eef0f4;
+    border-radius: 8px;
+}
+
+.excel-preview-scroll::-webkit-scrollbar-thumb {
+    background: #a5acba;
+    border-radius: 8px;
+}
+
+.excel-preview-scroll::-webkit-scrollbar-thumb:hover {
+    background: #8b93a3;
+}
+
+/* ============ PREMIUM SIDEBAR HEADER ============ */
+.sidebar-header {
+    padding: 20px 18px;
+    margin-bottom: 20px;
+    border-radius: 14px;
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.18), rgba(16, 185, 129, 0.12));
+    border: 1px solid rgba(99, 102, 241, 0.25);
+    box-shadow: 0 8px 24px rgba(99, 102, 241, 0.15);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+}
+
+.sidebar-header-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #6366f1, #10b981);
+    font-size: 26px;
+    box-shadow: 0 10px 28px rgba(99, 102, 241, 0.35);
+}
+
+.sidebar-header-title {
+    font-size: 32px;
+    font-weight: 950;
+    color: #ffffff;
+    letter-spacing: 0.5px;
+}
+
+.sidebar-header-subtitle {
+    font-size: 12px;
+    font-weight: 700;
+    color: #cbd5e1;
+    letter-spacing: 0.3px;
+}
+
+/* ============ FILE CHIPS ============ */
+.file-chip {
+    display: inline-block;
+    padding: 7px 14px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(99, 102, 241, 0.08));
+    border: 1px solid rgba(99, 102, 241, 0.25);
+    color: #a5b4fc;
+    font-size: 12px;
+    font-weight: 700;
+    margin: 0 8px 8px 0;
+    transition: all 250ms ease;
+}
+
+.file-chip:hover {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.22), rgba(99, 102, 241, 0.12));
+    border-color: rgba(99, 102, 241, 0.4);
+}
+
+.small-muted {
+    color: #94a3b8;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.2px;
+}
+
+/* ============ DIVIDERS ============ */
+hr {
+    border: none;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(99, 102, 241, 0.2), transparent);
+    margin: 24px 0 !important;
+}
+
+/* ============ SMOOTH ANIMATIONS ============ */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: translateY(12px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes slideInLeft {
+    from {
+        opacity: 0;
+        transform: translateX(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+.metric-card {
+    animation: slideIn 500ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.glass-card {
+    animation: slideIn 600ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* ============ RESPONSIVE DESIGN ============ */
+@media (max-width: 1024px) {
+    .topbar {
+        flex-direction: column;
+        gap: 14px;
+    }
+    
+    .navlinks {
+        width: 100%;
+        justify-content: center;
+    }
+    
+    .block-container {
+        padding-left: 1rem;
+        padding-right: 1rem;
+    }
+    
+    .hero-title {
         font-size: 28px;
-        font-weight: 800;
-        color: #10b981;
-        text-align: center;
-        margin-bottom: 8px;
     }
-    .success-subtitle {
-        font-size: 14px;
-        color: #94a3b8;
-        text-align: center;
-        margin-bottom: 32px;
-    }
+}
 
-    /* OUTPUT FILE BLOCKS */
-    .output-block {
-        background: rgba(30,41,59,0.7);
-        border: 2px solid #334155;
-        border-radius: 12px;
-        padding: 20px;
-        transition: all 0.3s ease;
+@media (max-width: 640px) {
+    .hero {
+        padding: 24px 20px;
     }
-    .output-block:hover {
-        background: rgba(20,184,166,0.1);
-        border-color: #14b8a6;
-        transform: translateY(-2px);
+    
+    .hero-title {
+        font-size: 24px;
     }
-    .output-icon {
-        font-size: 32px;
-        margin-bottom: 12px;
+    
+    .metric-card {
+        min-height: 120px;
+        padding: 16px 18px;
     }
-    .output-name {
-        font-size: 16px;
-        font-weight: 700;
-        color: #f1f5f9;
-        margin-bottom: 8px;
-    }
-    .output-path {
-        font-size: 11px;
-        color: #94a3b8;
-        font-family: monospace;
-        word-break: break-all;
-    }
-
-    /* DOWNLOAD BUTTON */
-    [data-testid="stDownloadButton"] > button {
-        background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%) !important;
-        color: #ffffff !important;
-        -webkit-text-fill-color: #ffffff !important;
-        font-weight: 600 !important;
-        border-radius: 8px !important;
-    }
-
-    /* DIVIDER */
-    hr {
-        border: none;
-        height: 1px;
-        background: linear-gradient(90deg, transparent, #334155, transparent);
-        margin: 24px 0 !important;
-    }
-
-    /* ANIMATIONS */
-    @keyframes pulse {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.6; }
-    }
-    @keyframes shake {
-        0%, 100% { transform: translateX(0); }
-        10%, 30%, 50%, 70%, 90% { transform: translateX(-4px); }
-        20%, 40%, 60%, 80% { transform: translateX(4px); }
-    }
+}
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
-# ====================== SIDEBAR ======================
-with st.sidebar:
-    st.markdown("""
-    <div class="logo-container">
-        <div class="company-name">⚡ 50 HERTZ</div>
-        <div class="tagline">Energy Automation Suite</div>
-        <div class="tagline">Weather Auto v1.0</div>
-    </div>
-    """, unsafe_allow_html=True)
-    st.markdown("---")
-    st.markdown("""
-    <div class="sidebar-info">
-        📊 All outputs saved to Output Folder
-    </div>
-    """, unsafe_allow_html=True)
 
-# ====================== PIPELINE DEFINITION ======================
+NETWORK_SHARE = r"\\172.16.0.65\Share\24_23_QA_Team\Abhishek_Sinha"
+SCRIPTS_DIR = r"\\172.16.0.65\Share\24_23_QA_Team\Abhishek_Sinha\Commit_File"
+
 PIPELINE = [
-    ("1/12  FTP Download",                "ECM10_FTP_DOWNLOAD.py"),
-    ("2/12  NC Data ECM10",               "Nc_data_ECM_10(ECM10).py"),
-    ("3/12  ECM10 Master",                "ECM10_MASTER.py"),
-    ("4/12  File Monitoring",             "File_Monitoring(ECM10_.py"),
-    ("5/12  Filtered Weather Data",       "Filtered_Weather_Data(ECM10).py"),
-    ("6/12  Filtered NC File",            "FilteredNc_File(ECM10).py"),
-    ("7/12  Weather DB – NC File Match",  "WeatherDB_NcFileMatch(ECM10).py"),
-    ("8/12  RE Prod ECM10",               "REProdECM10.py"),
-    ("9/12  RE Solar ECM10",              "RESOLAR_ECM10.py"),
-    ("10/12 RE Wind ECM10",               "REWIND_ECM10.py"),
-    ("11/12 Sync RE DB",                  "SYNC_RE_DB.py"),
-    ("12/12 Data Validation",             "Data_Validation.py"),
+    ("1/12 FTP Download", "ECM10_FTP_DOWNLOAD.py"),
+    ("2/12 NC Data ECM10", "Nc_data_ECM_10(ECM10).py"),
+    ("3/12 ECM10 Master", "ECM10_MASTER.py"),
+    ("4/12 File Monitoring", "File_Monitoring(ECM10_.py"),
+    ("5/12 Filtered Weather Data", "Filtered_Weather_Data(ECM10).py"),
+    ("6/12 Filtered NC File", "FilteredNc_File(ECM10).py"),
+    ("7/12 WeatherDB NcFile Match", "WeatherDB_NcFileMatch(ECM10).py"),
+    ("8/12 RE Prod ECM10", "REProdECM10.py"),
+    ("9/12 RE Solar ECM10", "RESOLAR_ECM10.py"),
+    ("10/12 RE Wind ECM10", "REWIND_ECM10.py"),
+    ("11/12 Sync RE DB", "SYNC_RE_DB.py"),
+    ("12/12 Data Validation", "Data_Validation.py"),
 ]
 
-# ====================== SESSION STATE ======================
-if "statuses" not in st.session_state:
-    st.session_state.statuses = ["pending"] * len(PIPELINE)
-if "resume_from" not in st.session_state:
-    st.session_state.resume_from = 0
-if "pipeline_completed" not in st.session_state:
-    st.session_state.pipeline_completed = False
+for k, v in {
+    "statuses": ["pending"] * len(PIPELINE),
+    "resume_from": 0,
+    "pipeline_completed": False,
+    "latlon_df": None,
+    "mismatch_df": None,
+    "shared_path": NETWORK_SHARE,
+    "scripts_path": SCRIPTS_DIR,
+}.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
 
-# ====================== SECTION HEADER HELPER ======================
+
 def section_header(icon, text):
     st.markdown(
-        f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">'
-        f'<div style="width:4px;height:24px;background:linear-gradient(180deg,#14b8a6,#f59e0b);border-radius:2px;flex-shrink:0;"></div>'
-        f'<span style="font-size:18px;font-weight:700;color:#ffffff !important;-webkit-text-fill-color:#ffffff !important;">{icon} {text}</span>'
-        f'</div>',
-        unsafe_allow_html=True
+        f"""
+        <div class="section-title">
+            <span class="section-bar"></span>
+            <span>{icon} {text}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
-# ====================== HELPER FUNCTIONS ======================
+
 def find_script(script_name, scripts_dir):
-    """Find script file handling special characters in filenames."""
-    # Try exact match in scripts directory
     if (scripts_dir / script_name).exists():
         return scripts_dir / script_name
-    
-    # Try in current working directory
     if Path(script_name).exists():
         return Path(script_name)
-    
-    # Try with wildcard for parentheses (e.g., Nc_data_ECM_10*.py)
     if "(" in script_name and ")" in script_name:
-        base_name = script_name.replace("(", "").replace(")", "")
-        matches = glob.glob(str(scripts_dir / base_name.replace(".py", "*.py")))
+        base = script_name.replace("(", "").replace(")", "")
+        matches = glob.glob(str(scripts_dir / base.replace(".py", "*.py")))
         if matches:
             return Path(matches[0])
-    
     return None
 
+
 def run_python_script(script_name, scripts_dir, output_dir):
-    """
-    Execute Python script with proper environment and unbuffered output.
-    Returns: (success, stdout, stderr, execution_time)
-    """
-    start_time = time.time()
-    
+    start = time.time()
     try:
         script_path = find_script(script_name, scripts_dir)
         if not script_path or not script_path.exists():
             return False, "", f"Script not found: {script_name}", 0
-        
-        # Set up environment - INHERIT FULL PARENT ENV
-        env = os.environ.copy()  # This copies parent process env
+        env = os.environ.copy()
         env["OUTPUT_DIR"] = str(output_dir)
         env["PYTHONUNBUFFERED"] = "1"
-        
-        # ADD: Explicitly set these if MongoDB credentials are in environment
-        # (They should be inherited above, but we're being explicit)
-        for key in os.environ:
-            if 'MONGO' in key or 'DB' in key or 'FTP' in key:
-                env[key] = os.environ[key]
-        
-        st.info(f"📍 Running: {script_path.name}")
-        st.info(f"📂 Working Dir: {scripts_dir}")
-        st.info(f"💾 Output Dir: {output_dir}")
-        
-        # Run with full environment inheritance
         result = subprocess.run(
             [sys.executable, str(script_path)],
             capture_output=True,
             text=True,
             cwd=str(scripts_dir),
-            env=env,  # Pass the environment
-            timeout=3600
+            env=env,
+            timeout=3600,
         )
-        
-        execution_time = time.time() - start_time
-        
+        elapsed = time.time() - start
         if result.returncode == 0:
-            return True, result.stdout, result.stderr, execution_time
-        else:
-            error_msg = result.stderr if result.stderr else f"Script exited with code {result.returncode}"
-            return False, result.stdout, error_msg, execution_time
-    
+            return True, result.stdout, result.stderr, elapsed
+        return False, result.stdout, result.stderr or f"Exit code {result.returncode}", elapsed
     except subprocess.TimeoutExpired:
-        return False, "", "Script execution timed out (>1 hour)", time.time() - start_time
+        return False, "", "Script execution timed out", time.time() - start
     except Exception as e:
-        return False, "", str(e), time.time() - start_time
+        return False, "", str(e), time.time() - start
 
-def verify_script_completion(output_dir, script_index):
-    """
-    Verify that the output file was actually generated.
-    Add specific file patterns here based on what each script produces.
-    """
-    # Define expected output patterns for each script
-    output_patterns = {
-        0: ["*FTP*", "*.nc"],  # FTP Download
-        1: ["*.xlsx", "*.xls"],  # NC Data (produces Excel)
-        2: ["ECM10_MASTER*"],     # ECM10 Master
-        3: ["*file_monitoring*"], # File Monitoring
-        4: ["*weather_data*"],    # Filtered Weather
-        5: ["*filtered_nc*"],     # Filtered NC
-        6: ["*match*"],           # WeatherDB Match
-        7: ["*prod*"],            # RE Prod
-        8: ["*solar*"],           # RE Solar
-        9: ["*wind*"],            # RE Wind
-        10: ["*sync*"],           # Sync RE
-        11: ["*validation*"],     # Data Validation
+
+def verify_script_completion(output_dir, idx):
+    patterns = {
+        0: ["*FTP*", "*.nc"],
+        1: ["*.xlsx", "*.xls"],
+        2: ["*MASTER*"],
+        3: ["*file_monitoring*"],
+        4: ["*weather_data*"],
+        5: ["*filtered_nc*"],
+        6: ["*match*"],
+        7: ["*prod*"],
+        8: ["*solar*"],
+        9: ["*wind*"],
+        10: ["*sync*"],
+        11: ["*validation*"],
     }
-    
-    if script_index < len(output_patterns):
-        for pattern in output_patterns[script_index]:
-            files = list(output_dir.glob(pattern))
-            if files:
-                # Check file is not empty
-                for f in files:
-                    if f.stat().st_size > 0:
-                        return True, f"Output verified: {f.name}"
-    
-    return False, "Output file not found"
+    for pat in patterns.get(idx, []):
+        for f in output_dir.glob(pat):
+            if f.is_file() and f.stat().st_size > 0:
+                return True, "Output file verified successfully"
+    return False, "Output file not verified"
 
-# ====================== MAIN UI ======================
-st.markdown('<h1 class="main-title">⚡ Automated Regression Suite</h1>', unsafe_allow_html=True)
+
+def find_latest_file(output_dir, keyword):
+    try:
+        files = [f for f in output_dir.iterdir() if f.is_file() and keyword.lower() in f.name.lower()]
+        return max(files, key=lambda x: x.stat().st_mtime) if files else None
+    except Exception:
+        return None
+
+
+def read_any_file(path):
+    if path.suffix.lower() in [".xlsx", ".xls"]:
+        try:
+            # Read the file normally first
+            df = pd.read_excel(path, engine="openpyxl", header=0)
+        except Exception:
+            df = pd.read_excel(path, engine="xlrd", header=0)
+        
+        # If columns are "Unnamed", use the second row as actual headers
+        if any(str(col).startswith('Unnamed') for col in df.columns):
+            try:
+                # Read with row 1 (second row) as the header
+                df = pd.read_excel(path, engine="openpyxl" if path.suffix.lower() in [".xlsx", ".xlsm"] else "xlrd", header=1)
+            except Exception:
+                pass
+    else:
+        for enc in ["utf-8", "utf-8-sig", "cp1252", "latin-1"]:
+            try:
+                df = pd.read_csv(path, encoding=enc)
+                break
+            except Exception:
+                pass
+        else:
+            df = pd.read_csv(path, encoding="latin-1")
+    
+    return df
+
+
+def df_to_excel_bytes(sheets):
+    bio = BytesIO()
+    with pd.ExcelWriter(bio, engine="xlsxwriter") as writer:
+        for name, df in sheets.items():
+            safe = str(name)[:31]
+            df.to_excel(writer, sheet_name=safe, index=False)
+    bio.seek(0)
+    return bio.getvalue()
+
+
+def detect_latlon_columns(df):
+    cols = list(df.columns)
+    lat = next((c for c in cols if c.lower() in ["lat", "latitude", "lat_dd"]), None)
+    lon = next((c for c in cols if c.lower() in ["lon", "lng", "long", "longitude", "lon_dd"]), None)
+    return lat, lon
+
+
+def mismatch_rows(df, lat_col, lon_col):
+    temp = df.copy()
+    temp[lat_col] = pd.to_numeric(temp[lat_col], errors="coerce")
+    temp[lon_col] = pd.to_numeric(temp[lon_col], errors="coerce")
+    bad = temp[temp[lat_col].isna() | temp[lon_col].isna()].copy()
+    if not bad.empty:
+        bad["Mismatch_Reason"] = "Invalid or missing Lat/Long"
+    return bad
+
+
+def render_status_pill(status):
+    cls = {
+        "pending": "pill-pending",  
+        "running": "pill-running",
+        "done": "pill-done",
+        "error": "pill-error",
+        "skipped": "pill-skipped",
+    }.get(status, "pill-pending")
+    return f"<span class='status-pill {cls}'>{status.upper()}</span>"
+
+
+import html as _html_lib
+import re
+import subprocess as _subprocess
+import tempfile
+import shutil
+
+
+def _convert_xlsx_to_html_table(xlsx_path):
+    """
+    Convert an .xlsx file to HTML using headless LibreOffice. LibreOffice
+    fully evaluates conditional-formatting rules (the green/red highlight
+    cells your pipeline scripts apply), so the resulting <table> markup
+    contains the *actual* computed bgcolor/font color for every cell --
+    something openpyxl cannot give us directly, since it only reports the
+    static formatting rules, not their evaluated result.
+
+    Returns the inner <table>...</table> HTML string, or None on failure.
+    """
+    xlsx_path = Path(xlsx_path)
+    if not xlsx_path.exists():
+        return None
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        local_copy = Path(tmpdir) / xlsx_path.name
+        try:
+            shutil.copy2(xlsx_path, local_copy)
+        except Exception:
+            return None
+
+        try:
+            result = _subprocess.run(
+                [
+                    "soffice", "--headless", "--norestore",
+                    "--convert-to", "html:HTML (StarCalc)",
+                    "--outdir", tmpdir, str(local_copy),
+                ],
+                capture_output=True, text=True, timeout=90,
+            )
+        except Exception:
+            return None
+
+        if result.returncode != 0:
+            return None
+
+        html_path = local_copy.with_suffix(".html")
+        if not html_path.exists():
+            return None
+
+        try:
+            raw_html = html_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            return None
+
+    match = re.search(r"<table[^>]*>.*</table>", raw_html, re.DOTALL | re.IGNORECASE)
+    if not match:
+        return None
+    table_html = match.group(0)
+
+    table_html = re.sub(r'\sdata-sheets-value="[^"]*"', "", table_html)
+    table_html = re.sub(r"<a class=\"comment-indicator\".*?</a>", "", table_html, flags=re.DOTALL)
+    table_html = re.sub(r"<comment>.*?</comment>", "", table_html, flags=re.DOTALL)
+
+    return table_html
+
+
+def render_excel_with_formatting(path, max_rows=None):
+    """
+    Render an .xlsx file's first sheet as HTML, preserving its native
+    cell colors (including evaluated conditional formatting) by running it
+    through headless LibreOffice. Wrapped in the dashboard's glass-card
+    container with a light inner background, since most Excel highlight
+    colors (white/green/red/yellow) are designed for light backgrounds.
+    Returns None if conversion isn't possible, so callers can fall back.
+    """
+    table_html = _convert_xlsx_to_html_table(path)
+    if table_html is None:
+        return None
+
+    return f"""
+    <div class="glass-card excel-preview-wrap">
+        <div class="excel-preview-scroll">
+            {table_html}
+        </div>
+    </div>
+    """
+
+
+def render_styled_dataframe(df, max_rows=300):
+    """
+    Render a pandas DataFrame as a styled HTML table that matches the
+    dashboard's dark glass theme. Used as a fallback when the source file
+    isn't an .xlsx (so there's no native Excel formatting to preserve),
+    e.g. .csv outputs or in-session data like the Lat/Long table.
+    """
+    if df is None or df.empty:
+        return "<div class='glass-card'><span class='small-muted'>No data to display.</span></div>"
+
+    display_df = df.head(max_rows)
+
+    header_html = "".join(
+        f"<th>{_html_lib.escape(str(col))}</th>" for col in display_df.columns
+    )
+
+    body_rows = []
+    for _, row in display_df.iterrows():
+        cells = []
+        for v in row:
+            if pd.isna(v):
+                cells.append("<td></td>")
+            else:
+                cells.append(f"<td>{_html_lib.escape(str(v))}</td>")
+        body_rows.append(f"<tr>{''.join(cells)}</tr>")
+    rows_html = "".join(body_rows)
+
+    truncated_note = ""
+    if len(df) > max_rows:
+        truncated_note = (
+            f"<div class='small-muted' style='margin-top:10px;'>"
+            f"Showing first {max_rows} of {len(df)} rows. Use the download "
+            f"button for the full dataset.</div>"
+        )
+
+    return f"""
+    <div class="glass-card styled-table-wrap">
+        <table>
+            <thead>
+                <tr>{header_html}</tr>
+            </thead>
+            <tbody>{rows_html}</tbody>
+        </table>
+    </div>
+    {truncated_note}
+    """
+
+
+def render_file_preview(path, df, max_rows=300):
+    """
+    Top-level helper used by the output tabs: tries to preserve the
+    original Excel coloring (fills + evaluated conditional-formatting
+    highlights) by converting the file with LibreOffice; falls back to the
+    plain dark-themed table renderer for non-Excel files or on any
+    conversion error (e.g. LibreOffice unavailable, file locked).
+    """
+    if path is not None and Path(path).suffix.lower() in (".xlsx", ".xlsm"):
+        html_table = render_excel_with_formatting(path)
+        if html_table is not None:
+            return html_table
+    return render_styled_dataframe(df, max_rows=max_rows)
+
+
 st.markdown(
-    '<p style="font-size:14px;color:#94a3b8;-webkit-text-fill-color:#94a3b8;font-weight:500;margin-bottom:24px;">'
-    'Weather Data Processing Pipeline | Advanced Automation</p>',
-    unsafe_allow_html=True
+    """
+<div class="topbar">
+    <div class="brand">
+        <span class="brand-badge">⚡</span>
+        <span>Weather Auto Regression</span>
+    </div>
+    <div class="navlinks">
+        <span class="nav-item active">Dashboard</span>
+        <span class="nav-item">Pipeline</span>
+        <span class="nav-item">Outputs</span>
+        <span class="nav-item">Logs</span>
+    </div>
+</div>
+""",
+    unsafe_allow_html=True,
 )
 
-# ====================== CONFIGURATION ======================
-section_header("📁", "Configuration")
-
-NETWORK_SHARE = r"\\172.16.0.65\Share\24_23_QA_Team\Abhishek_Sinha"
-SCRIPTS_DIR = r"\\172.16.0.65\Share\24_23_QA_Team\Abhishek_Sinha\Commit_File"
-
-shared_path = st.text_input(
-    "📍 Output Folder Path (Network Share)",
-    value=NETWORK_SHARE,
-    help="Network share path where ALL pipeline scripts save their outputs."
+st.markdown(
+    """
+<div class="hero">
+    <div class="hero-title">Automated Regression Suite</div>
+    <div class="hero-sub">Weather Data Processing Pipeline | Production-Grade Dashboard</div>
+    <div class="hero-pills">
+        <span class="pill">⚡ Weather Auto v3.0</span>
+        <span class="pill">🔄 Multi-Step Pipeline</span>
+        <span class="pill">🗺️ Lat/Long Review</span>
+    </div>
+</div>
+""",
+    unsafe_allow_html=True,
 )
 
-scripts_path = st.text_input(
-    "📂 Scripts Directory Path",
-    value=SCRIPTS_DIR,
-    help="Path to folder containing all Python scripts (.py files)."
-)
+with st.sidebar:
+    st.markdown("""
+    <div style="
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 20px 18px;
+        margin-bottom: 20px;
+        border-radius: 14px;
+        background: linear-gradient(135deg, rgba(99, 102, 241, 0.18), rgba(16, 185, 129, 0.12));
+        border: 1px solid rgba(99, 102, 241, 0.25);
+        box-shadow: 0 8px 24px rgba(99, 102, 241, 0.15);
+    ">
+        <div style="
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            background: linear-gradient(135deg, #6366f1, #10b981);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 26px;
+            box-shadow: 0 10px 28px rgba(99, 102, 241, 0.35);
+        ">⚡</div>
+        <div>
+            <div style="font-size: 32px; font-weight: 950; color: #ffffff; letter-spacing: 0.5px;">50 HERTZ</div>
+            <div style="font-size: 12px; font-weight: 700; color: #cbd5e1; letter-spacing: 0.3px;">Energy Automation</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-output_dir = Path(shared_path)
-scripts_dir = Path(scripts_path)
-
-# Verify network path is accessible
-try:
-    if output_dir.exists():
-        st.success(f"✅ **Connected to Output Directory:** `{shared_path}`")
-    else:
-        st.error(f"❌ **Output path not accessible:** `{shared_path}`")
-        st.stop()
+    st.markdown("---")
     
-    if scripts_dir.exists():
-        st.success(f"✅ **Connected to Scripts Directory:** `{scripts_path}`")
-    else:
-        st.error(f"❌ **Scripts path not accessible:** `{scripts_path}`")
-        st.error("Please verify:")
-        st.error("  • Scripts directory exists")
-        st.error("  • Path is correct: `\\Commit_File`")
-        st.error("  • You have read permissions")
-        st.stop()
-except Exception as e:
-    st.error(f"❌ **Cannot access network paths:** {e}")
+    st.markdown("<p class='section-label'>📁 Output Configuration</p>", unsafe_allow_html=True)
+    shared_path = st.text_input("Output Path", value=st.session_state.shared_path, key="shared_input")
+    st.session_state.shared_path = shared_path
+    
+    scripts_path = st.text_input("Scripts Path", value=st.session_state.scripts_path, key="scripts_input")
+    st.session_state.scripts_path = scripts_path
+    
+    st.markdown("---")
+    
+    st.markdown("<p class='section-label'>🎯 Data & Execution</p>", unsafe_allow_html=True)
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        data_source = st.selectbox("Data Source", ["NWP_E10.0", "ALLNCM_12.5"], index=0)
+    with col2:
+        selected_date = st.date_input("Exec Date", value=datetime.date.today(), label_visibility="collapsed")
+    
+    st.markdown("---")
+    
+    st.markdown("<p class='section-label'>⚙️ Pipeline Control</p>", unsafe_allow_html=True)
+    force_redownload = st.checkbox("Force Re-download", value=False)
+    
+    st.markdown("---")
+
+output_dir = Path(st.session_state.shared_path)
+scripts_dir = Path(st.session_state.scripts_path)
+
+if not output_dir.exists():
+    st.error(f"❌ Output path not accessible: {st.session_state.shared_path}")
     st.stop()
+if not scripts_dir.exists():
+    st.error(f"❌ Scripts path not accessible: {st.session_state.scripts_path}")
+    st.stop()
+
+total_steps = len(PIPELINE)
+done_steps = sum(1 for s in st.session_state.statuses if s in ("done", "skipped"))
+running_steps = sum(1 for s in st.session_state.statuses if s == "running")
+error_steps = sum(1 for s in st.session_state.statuses if s == "error")
+
+m1, m2, m3, m4 = st.columns(4)
+
+metric_configs = [
+    (m1, "Total Steps", total_steps, "Pipeline length", "#3b82f6"),
+    (m2, "Completed", done_steps, "Done + skipped", "#10b981"),
+    (m3, "Running", running_steps, "Active step", "#f59e0b"),
+    (m4, "Errors", error_steps, "Failed steps", "#ef4444"),
+]
+
+for col, label, value, desc, accent_color in metric_configs:
+    with col:
+        st.markdown(
+            f"""
+            <div class="metric-card" style="--accent-color: {accent_color}">
+                <div class="metric-label">{label}</div>
+                <div class="metric-value">{value}</div>
+                <div class="metric-desc">{desc}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 st.markdown("---")
 
-# ====================== FTP SETTINGS ======================
-section_header("⚙️", "FTP Download Settings")
-
-ftp_col1, ftp_col2 = st.columns([3, 1])
-with ftp_col1:
-    ftp_file_path = st.text_input(
-        "📂 FTP Downloaded File Path",
-        value=str(output_dir / "ECM10_FTP"),
-        help="Step 1 will be skipped if this exists"
-    )
-with ftp_col2:
-    force_redownload = st.checkbox("🔁 Force Re-download", value=False)
+section_header("📁", "Configuration")
+c1, c2, c3 = st.columns([3, 1.2, 1])
+with c1:
+    ftp_file_path = st.text_input("FTP File Path", value=str(output_dir / "ECM10_FTP"))
+with c2:
+    start_from = st.number_input("Resume", min_value=0, max_value=len(PIPELINE), value=st.session_state.resume_from, step=1)
+    st.session_state.resume_from = int(start_from)
+with c3:
+    st.metric("Pipeline", f"{done_steps}/{total_steps}")
 
 ftp_path = Path(ftp_file_path)
 ftp_already_exists = ftp_path.exists() and not force_redownload
 
-if ftp_already_exists:
-    st.success("✅ FTP file exists — Step 1 will be skipped")
-elif force_redownload:
-    st.warning("🔁 Force re-download enabled")
-else:
-    st.info("📡 Step 1 (FTP Download) will run normally")
+section_header("🗺️", "Lat/Long Configuration")
+ll1, ll2, ll3 = st.columns([1, 1, 0.8])
+with ll1:
+    lat_value = st.number_input("Latitude", value=28.6139, format="%.6f", step=0.0001)
+with ll2:
+    lon_value = st.number_input("Longitude", value=77.2090, format="%.6f", step=0.0001)
+with ll3:
+    save_latlon = st.button("Save", use_container_width=True)
 
-st.markdown("---")
+if save_latlon:
+    st.session_state.latlon_df = pd.DataFrame([{"Latitude": lat_value, "Longitude": lon_value}])
+    st.success("✅ Lat/Long saved to session.")
 
-# ====================== EXECUTION PARAMETERS ======================
-section_header("⚙️", "Execution Parameters")
+if st.session_state.latlon_df is not None:
+    st.markdown(render_styled_dataframe(st.session_state.latlon_df), unsafe_allow_html=True)
 
-param_col1, param_col2 = st.columns(2)
-with param_col1:
-    data_source = st.selectbox("Data Source", ["NWP_E10.0", "NWP_E10.1", "OBS_Data"], index=0)
-with param_col2:
-    selected_date = st.date_input("Execution Date", value=datetime.date.today())
+section_header("🔄", "Pipeline Execution Status")
+status_placeholder = st.empty()
 
-resume_from = st.session_state.resume_from
-if resume_from > 0 and resume_from < len(PIPELINE):
-    st.info(f"⚡ **Resume from Step {resume_from + 1}:** {PIPELINE[resume_from][0].strip()}")
+def render_status_table(statuses):
+    rows = ""
+    for i, (label, script) in enumerate(PIPELINE):
+        s = statuses[i]
+        rows += (
+            f"<tr>"
+            f"<td style='padding:12px 14px;'>{label}</td>"
+            f"<td style='padding:12px 14px;font-family:monospace;color:#cbd5e1;font-size:12px;'>{script}</td>"
+            f"<td style='padding:12px 14px;'>{render_status_pill(s)}</td>"
+            f"</tr>"
+        )
+    return f"""
+    <div class="glass-card">
+        <table style="width:100%;border-collapse:collapse;">
+            <thead>
+                <tr style="color:#94a3b8;text-align:left;border-bottom:1px solid rgba(99, 102, 241, 0.15);">
+                    <th style="padding:12px 14px;font-weight:700;text-transform:uppercase;font-size:11px;letter-spacing:0.5px;">Step</th>
+                    <th style="padding:12px 14px;font-weight:700;text-transform:uppercase;font-size:11px;letter-spacing:0.5px;">Script</th>
+                    <th style="padding:12px 14px;font-weight:700;text-transform:uppercase;font-size:11px;letter-spacing:0.5px;">Status</th>
+                </tr>
+            </thead>
+            <tbody>{rows}</tbody>
+        </table>
+    </div>
+    """
 
-button_col1, button_col2 = st.columns([3, 1])
-with button_col1:
-    run_button = st.button("🚀 RUN / RESUME REGRESSION SUITE", type="primary", use_container_width=True)
-with button_col2:
+status_placeholder.markdown(render_status_table(st.session_state.statuses), unsafe_allow_html=True)
+
+run_col, reset_col = st.columns([3, 1])
+with run_col:
+    run_button = st.button("🚀 RUN / RESUME REGRESSION SUITE", use_container_width=True, type="primary")
+with reset_col:
     reset_button = st.button("🔄 Reset", use_container_width=True)
 
 if reset_button:
     st.session_state.statuses = ["pending"] * len(PIPELINE)
     st.session_state.resume_from = 0
     st.session_state.pipeline_completed = False
+    st.session_state.mismatch_df = None
     st.rerun()
 
-# ====================== PIPELINE STATUS TABLE ======================
-st.markdown("---")
-section_header("🔄", "Pipeline Execution Status")
+progress = st.progress(0, text="Pipeline ready")
 
-status_placeholder = st.empty()
-
-def render_status_table(statuses):
-    icon_map = {
-        "pending": ("⏳", "step-pending"),
-        "running": ("▶️", "step-running"),
-        "done":    ("✅", "step-done"),
-        "error":   ("❌", "step-error"),
-        "skipped": ("⏭️", "step-skipped"),
-    }
-    
-    # Prepare data for the table in a structured format
-    table_rows_data = []
-    for i, (label, script) in enumerate(PIPELINE):
-        status_key = statuses[i] if i < len(statuses) else "pending"
-        icon, css_class = icon_map.get(status_key, ("⏳", "step-pending"))
-        
-        table_rows_data.append({
-            "label": label,
-            "script": script,
-            "status_text": status_key.upper(),
-            "icon": icon,
-            "css_class": css_class
-        })
-
-    # Generate HTML rows from the structured data
-    rows_html = ""
-    for row_data in table_rows_data:
-        rows_html += (
-            f"<tr>"
-            f"<td style='padding:12px 16px;'><span class='{row_data['css_class']}'>{row_data['icon']} {row_data['label']}</span></td>"
-            f"<td style='padding:12px 16px;font-family:monospace;font-size:12px;color:#94a3b8;'>{row_data['script']}</td>"
-            f"<td style='padding:12px 16px;'><span class='{row_data['css_class']}'>{row_data['status_text']}</span></td>"
-            f"</tr>"
-        )
-    return (
-        "<div class='status-table'>"
-        "<table><thead><tr>"
-        "<th>Step</th><th>Script</th><th>Status</th>"
-    )
-
-status_placeholder.markdown(render_status_table(st.session_state.statuses), unsafe_allow_html=True)
-
-# ====================== RUN PIPELINE ======================
 if run_button:
-    overall_progress = st.progress(0)
-    log_expander = st.expander("📋 Script Output Logs", expanded=False)
-    pipeline_failed = False
-    start_from = st.session_state.resume_from
+    logs = st.container()
+    failed = False
 
     for idx, (label, script_name) in enumerate(PIPELINE):
-        if idx < start_from:
+        if idx < st.session_state.resume_from:
             continue
 
         if idx == 0 and ftp_already_exists:
-            st.session_state.statuses[0] = "skipped"
+            st.session_state.statuses[idx] = "skipped"
             st.session_state.resume_from = 1
             status_placeholder.markdown(render_status_table(st.session_state.statuses), unsafe_allow_html=True)
-            st.info("⏭️ **Step 1 (FTP Download) skipped** — file already exists")
-            done_count = sum(1 for s in st.session_state.statuses if s in ("done", "skipped"))
-            overall_progress.progress(int(done_count / len(PIPELINE) * 100))
+            progress.progress(int((1 / total_steps) * 100), text=f"Skipped: {label}")
             continue
 
-        # Mark as running
         st.session_state.statuses[idx] = "running"
         status_placeholder.markdown(render_status_table(st.session_state.statuses), unsafe_allow_html=True)
+        progress.progress(int((idx / total_steps) * 100), text=f"Running: {label}")
 
-        # Run the script
+        with logs:
+            with st.expander(f"Step {idx+1}: {label}", expanded=True):
+                st.info(f"Executing {script_name}")
+
         success, stdout, stderr, exec_time = run_python_script(script_name, scripts_dir, output_dir)
-        
-        # Display logs
-        with log_expander:
-            st.markdown(f"### **Step {idx + 1}: {label}** (`{script_name}`)")
-            st.markdown(f"⏱️ **Execution Time:** {exec_time:.2f} seconds")
-            
-            if stdout:
-                st.markdown("**STDOUT:**")
-                st.code(stdout, language="text")
-            if stderr:
-                st.markdown("**STDERR:**")
-                st.code(stderr, language="text")
+
+        with logs:
+            with st.expander(f"Logs: {label}", expanded=False):
+                st.write(f"Execution time: {exec_time:.2f} sec")
+                if stdout:
+                    st.code(stdout, language="text")
+                if stderr:
+                    st.code(stderr, language="text")
 
         if not success:
             st.session_state.statuses[idx] = "error"
             st.session_state.resume_from = idx
             status_placeholder.markdown(render_status_table(st.session_state.statuses), unsafe_allow_html=True)
-            st.error(f"❌ **Step {idx + 1} failed:** {label}\n\n**Error:**\n```\n{stderr[:500]}\n```\n\nFix the issue and click **RUN / RESUME** to continue.")
-            pipeline_failed = True
+            st.error(f"❌ Step failed: {label}")
+            failed = True
             break
 
-        # Verify output was actually generated (optional but recommended)
-        if idx > 0:  # Skip verification for FTP download
-            verified, msg = verify_script_completion(output_dir, idx)
-            if not verified:
-                st.warning(f"⚠️ {msg} - Script claims success but output not verified")
-            else:
-                st.success(f"✅ {msg}")
 
-        # Mark as done
+
         st.session_state.statuses[idx] = "done"
         st.session_state.resume_from = idx + 1
         status_placeholder.markdown(render_status_table(st.session_state.statuses), unsafe_allow_html=True)
-        
-        done_count = sum(1 for s in st.session_state.statuses if s in ("done", "skipped"))
-        overall_progress.progress(int(done_count / len(PIPELINE) * 100))
+        progress.progress(int(((idx + 1) / total_steps) * 100), text=f"Completed: {label}")
 
-    if not pipeline_failed:
-        overall_progress.progress(100)
-        st.session_state.resume_from = 0
+    if not failed:
         st.session_state.pipeline_completed = True
-        st.rerun()
+        st.session_state.resume_from = 0
+        progress.progress(100, text="Pipeline completed successfully")
+        st.balloons()
 
-# ====================== FILE FINDER - DYNAMIC FROM NETWORK SHARE ======================
-def find_latest_file(pattern):
-    """Find the most recently modified file matching pattern in network share."""
-    try:
-        if not output_dir.exists():
-            return None
-        
-        matching_files = []
-        for f in output_dir.iterdir():
-            if f.is_file() and pattern.lower() in f.name.lower():
-                matching_files.append(f)
-        
-        if matching_files:
-            return max(matching_files, key=lambda x: x.stat().st_mtime)
-    except (PermissionError, OSError):
-        pass
-    
-    return None
 
 def get_output_files():
-    """Scan network share for the latest output files generated by pipeline."""
-    files_found = {
-        "file_monitoring": find_latest_file("file_monitoring"),
-        "data_validation": find_latest_file("data_validation"),
-        "data_sync": find_latest_file("sync_from_re")
+    return {
+        "file_monitoring": find_latest_file(output_dir, "file_monitoring"),
+        "data_validation": find_latest_file(output_dir, "data_validation"),
+        "data_sync": find_latest_file(output_dir, "sync_from_re"),
+        "mismatch": find_latest_file(output_dir, "mismatch"),
     }
-    return files_found
 
-def read_csv_safe(filepath):
-    """Read CSV with multiple encoding fallbacks."""
-    encodings = ['utf-8', 'utf-8-sig', 'cp1252', 'latin-1']
-    
-    for encoding in encodings:
-        try:
-            with open(filepath, 'r', encoding=encoding) as f:
-                return pd.read_csv(f)
-        except (UnicodeDecodeError, UnicodeError):
-            continue
-    
-    return pd.read_csv(filepath, encoding='utf-8', errors='ignore')
 
-def read_excel_safe(filepath):
-    """Read Excel file with error handling."""
-    try:
-        return pd.read_excel(filepath, engine='openpyxl')
-    except Exception:
-        try:
-            return pd.read_excel(filepath, engine='xlrd')
-        except Exception as e:
-            st.error(f"Cannot read Excel file: {e}")
-            return None
-
-# ====================== SUCCESS COMPLETION PANEL ======================
 if st.session_state.pipeline_completed:
-    st.markdown("""
-    <div class="success-panel">
-        <div class="success-title">🎉 All 12 Steps Completed Successfully!</div>
-        <div class="success-subtitle">Your weather data processing pipeline has finished. Output files are ready below.</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.markdown("---")
-    
     section_header("📊", "Generated Output Files")
-    
-    output_files = get_output_files()
-    
-    col1, col2, col3 = st.columns(3)
-    
-    # FILE 1: FILE MONITORING
-    with col1:
-        fp = output_files.get("file_monitoring")
-        if fp:
-            file_size = fp.stat().st_size / (1024 * 1024)
-            st.markdown(f"""
-            <div class="output-block">
-                <div class="output-icon">📁</div>
-                <div class="output-name">File Monitoring</div>
-                <div class="output-path">{fp.name}</div>
-                <div style="font-size:11px;color:#64748b;margin-top:8px;">📍 {str(fp.parent)}</div>
-                <div style="font-size:10px;color:#475569;margin-top:4px;">Size: {file_size:.2f} MB</div>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            try:
-                if fp.suffix.lower() == ".xlsx":
-                    df = pd.read_excel(fp)
-                else:
-                    df = read_csv_safe(fp)
-                st.dataframe(df, use_container_width=True, hide_index=True)
-                
-                with open(fp, "rb") as f:
-                    file_bytes = f.read()
+    files = get_output_files()
+    tabs = st.tabs(["File Monitoring", "Data Validation", "Data Sync", "Mismatch Data", "Lat/Long"])
 
+    with tabs[0]:
+        fp = files["file_monitoring"]
+        if fp:
+            df = read_any_file(fp)
+            st.markdown(f"<div class='file-chip'>{fp.name}</div>", unsafe_allow_html=True)
+            st.markdown(render_file_preview(fp, df), unsafe_allow_html=True)
+            with open(fp, "rb") as f:
                 st.download_button(
-                    label=f"⬇️ Download {fp.name}",
-                    data=file_bytes,
+                    "Download Excel",
+                    f.read(),
                     file_name=fp.name,
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="fm_download_success",
-                    use_container_width=True
                 )
-            except Exception as e:
-                st.error(f"❌ Error reading file: {str(e)[:100]}")
         else:
-            st.markdown("""
-            <div class="output-block">
-                <div class="output-icon">⏳</div>
-                <div class="output-name">File Monitoring</div>
-                <div class="output-path">Waiting for file...</div>
-            </div>
-            """, unsafe_allow_html=True)
-            st.info("📂 File Monitoring output not found yet.")
-    
-    # FILE 2: DATA VALIDATION
-    with col2:
-        fp = output_files.get("data_validation")
-        if fp:
-            file_size = fp.stat().st_size / (1024 * 1024)
-            st.markdown(f"""
-            <div class="output-block">
-                <div class="output-icon">✔️</div>
-                <div class="output-name">Data Validation</div>
-                <div class="output-path">{fp.name}</div>
-                <div style="font-size:11px;color:#64748b;margin-top:8px;">📍 {str(fp.parent)}</div>
-                <div style="font-size:10px;color:#475569;margin-top:4px;">Size: {file_size:.2f} MB</div>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            try:
-                df = read_excel_safe(fp)
-                if df is not None:
-                    st.dataframe(df, use_container_width=True, hide_index=True)
-                    
-                    with open(fp, 'rb') as f:
-                        file_bytes = f.read()
-                    
-                    st.download_button(
-                        label="⬇️ Download Data_Validation.xlsx",
-                        data=file_bytes,
-                        file_name=fp.name,
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        key="dv_download_success",
-                        use_container_width=True
-                    )
-            except Exception as e:
-                st.error(f"❌ Error reading file: {str(e)[:100]}")
-        else:
-            st.markdown("""
-            <div class="output-block">
-                <div class="output-icon">⏳</div>
-                <div class="output-name">Data Validation</div>
-                <div class="output-path">Waiting for file...</div>
-            </div>
-            """, unsafe_allow_html=True)
-            st.info("📂 Data Validation output not found yet.")
-    
-    # FILE 3: DATA SYNC
-    with col3:
-        fp = output_files.get("data_sync")
-        if fp:
-            file_size = fp.stat().st_size / (1024 * 1024)
-            st.markdown(f"""
-            <div class="output-block">
-                <div class="output-icon">🔄</div>
-                <div class="output-name">Data Sync</div>
-                <div class="output-path">{fp.name}</div>
-                <div style="font-size:11px;color:#64748b;margin-top:8px;">📍 {str(fp.parent)}</div>
-                <div style="font-size:10px;color:#475569;margin-top:4px;">Size: {file_size:.2f} MB</div>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            try:
-                df = read_excel_safe(fp)
-                if df is not None:
-                    st.dataframe(df, use_container_width=True, hide_index=True)
-                    
-                    with open(fp, 'rb') as f:
-                        file_bytes = f.read()
-                    
-                    st.download_button(
-                        label="⬇️ Download Sync_from_RE.xlsx",
-                        data=file_bytes,
-                        file_name=fp.name,
-                        
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        key="sync_download_success",
-                        use_container_width=True
-                    )
-            except Exception as e:
-                st.error(f"❌ Error reading file: {str(e)[:100]}")
-        else:
-            st.markdown("""
-            <div class="output-block">
-                <div class="output-icon">⏳</div>
-                <div class="output-name">Data Sync</div>
-                <div class="output-path">Waiting for file...</div>
-            </div>
-            """, unsafe_allow_html=True)
-            st.info("📂 Data Sync output not found yet.")
-    
-    st.markdown("---")
-    st.info(f"📂 **Output Directory:** `{output_dir}`")
+            st.info("No File Monitoring file found.")
 
-# ====================== FOOTER ======================
+    with tabs[1]:
+        fp = files["data_validation"]
+        if fp:
+            df = read_any_file(fp)
+            st.markdown(f"<div class='file-chip'>{fp.name}</div>", unsafe_allow_html=True)
+            st.markdown(render_file_preview(fp, df), unsafe_allow_html=True)
+            with open(fp, "rb") as f:
+                st.download_button(
+                    "Download Excel",
+                    f.read(),
+                    file_name=fp.name,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+        else:
+            st.info("No Data Validation file found.")
+
+    with tabs[2]:
+        fp = files["data_sync"]
+        if fp:
+            df = read_any_file(fp)
+            st.markdown(f"<div class='file-chip'>{fp.name}</div>", unsafe_allow_html=True)
+            st.markdown(render_file_preview(fp, df), unsafe_allow_html=True)
+            with open(fp, "rb") as f:
+                st.download_button(
+                    "Download Excel",
+                    f.read(),
+                    file_name=fp.name,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+        else:
+            st.info("No Sync file found.")
+
+    with tabs[3]:
+        fp = files["mismatch"]
+        if fp:
+            df = read_any_file(fp).copy()
+            df.columns = [str(c).strip() for c in df.columns]
+            lat_col, lon_col = detect_latlon_columns(df)
+
+            st.markdown(f"<div class='file-chip'>{fp.name}</div>", unsafe_allow_html=True)
+            st.markdown(render_file_preview(fp, df), unsafe_allow_html=True)
+
+            if lat_col and lon_col:
+                bad = mismatch_rows(df, lat_col, lon_col)
+                st.session_state.mismatch_df = bad
+                if not bad.empty:
+                    st.warning(f"⚠️ {len(bad)} mismatch rows found in Lat/Long.")
+                else:
+                    st.success("✅ No Lat/Long mismatch found.")
+
+                st.markdown("<p class='section-label' style='margin-top:18px;'>✏️ Edit Data</p>", unsafe_allow_html=True)
+                edited = st.data_editor(df, use_container_width=True, hide_index=True, num_rows="dynamic")
+                combined = {
+                    "Original Data": df,
+                    "Mismatch Data": bad if not bad.empty else pd.DataFrame(columns=df.columns),
+                    "Updated Data": edited,
+                    "LatLong": st.session_state.latlon_df if st.session_state.latlon_df is not None else pd.DataFrame([{"Latitude": lat_value, "Longitude": lon_value}]),
+                }
+                st.download_button(
+                    "Download Mismatch Excel",
+                    df_to_excel_bytes(combined),
+                    file_name="mismatch_with_latlong.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            else:
+                st.info("Latitude/Longitude columns not detected.")
+                st.download_button(
+                    "Download Excel",
+                    df_to_excel_bytes({"Mismatch Source": df}),
+                    file_name="mismatch_source.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+        else:
+            st.info("No mismatch file found.")
+
+    with tabs[4]:
+        if st.session_state.latlon_df is not None:
+            st.markdown(render_styled_dataframe(st.session_state.latlon_df), unsafe_allow_html=True)
+            st.download_button(
+                "Download LatLong Excel",
+                df_to_excel_bytes({"LatLong": st.session_state.latlon_df}),
+                file_name="lat_long.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        else:
+            st.info("No Lat/Long saved yet.")
+
+
 st.markdown("---")
-st.markdown(f"""
-<div style="text-align:center;color:#64748b;font-size:11px;margin-top:24px;">
-    <strong style="color:#94a3b8;">Output Directory:</strong>
-    <span style="color:#94a3b8;"> {shared_path}</span><br>
-    <strong style="color:#94a3b8;">Last Refreshed:</strong>
-    <span style="color:#94a3b8;"> {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</span><br>
-    <em style="color:#64748b;">Weather Auto Regression Suite v1.0 | 50 Hertz Energy</em>
+st.markdown(
+    f"""
+<div style="text-align:center;color:#94a3b8;font-size:12px;padding:24px 0;">
+    <div style="margin-bottom:10px;">📂 <strong>Output:</strong> {st.session_state.shared_path}</div>
+    <div style="margin-bottom:10px;">⏰ <strong>Last Refreshed:</strong> {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</div>
+    <div style="font-size:11px;color:#64748b;margin-top:18px;letter-spacing:0.3px;"><em>Weather Auto Regression Suite | Premium Production Dashboard</em></div>
 </div>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
